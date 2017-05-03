@@ -1,0 +1,132 @@
+---
+title: "PracticalMachineLearning_Assignment"
+author: "Nam Nguyen"
+date: "5/2/2017"
+output: html_document
+---
+## Practical Machine Learning Assignment
+
+In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The goal of the project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. We may use any of the other variables to predict with.
+
+## Prepping Environment
+Here's some packages I'll be using
+```{r}
+library(randomForest)
+library(corrplot)
+library(rpart)
+library(rpart.plot)
+library(caret)
+```
+
+## Getting the Data
+First we'll download and load the test and training data provided for the assignment into two different variables. Initial loading showed that some variables were coming in as "#DIV/0" so we will ignore those values when loading the data to make analysis easier.
+
+
+```{r}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv")
+training_data <- read.csv("pml-training.csv", na.strings=c("#DIV/0!"))
+
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv")
+testing_data <- read.csv("pml-testing.csv", na.strings=c("#DIV/0!"))
+```
+
+The following were run as see a summary of the data (commented out for report readability):
+```{r}
+#summary(training_data)
+#sapply(training_data, class)
+#str(training_data)
+```
+
+The training file contained 19622 records with 160 vairiables. The testing set contains 20 records with the same number of variables. The goal of this project is to predict the "classe" variable.
+
+## Data Cleansing
+
+I see a few problems with some of the data. First, there are data with NA values. I've opted to remove variables with NA values.  In addition I've opted to remove X, timestamp, and window as well as they are not measurements from the accelermeter that I am interested in. The following does the cleansing on the training set.
+
+```{r}
+training_data_toremove <- grepl("^X|timestamp|window", names(training_data))
+
+training_data_clean <- training_data[, !training_data_toremove]
+
+training_data_clean <- training_data_clean[, colSums(is.na(training_data_clean)) == 0]
+
+training_data_clean <- training_data_clean[, sapply(training_data_clean, is.numeric)]
+
+training_data_clean$classe <- training_data$classe
+```
+
+The same transformation and cleansing is performed on the testing data:
+
+```{r}
+testing_data_toremove <- grepl("^X|timestamp|window", names(testing_data))
+
+testing_data_clean <- testing_data[, !testing_data_toremove]
+
+testing_data_clean <- testing_data_clean[, colSums(is.na(testing_data_clean)) == 0]
+
+testing_data_clean <- testing_data_clean[, sapply(testing_data_clean, is.numeric)]
+
+testing_data_clean$classe <- testing_data$classe
+```
+
+Both sets now have the same number of records as before but down to 53 variables (52 measurements and the 1 classe attribute.).
+
+## Partitioning the Data
+
+Now we'll parition the data in the training set so that we have a training set and a validation set. I've opted for a 80% training to 20% validation set split.
+
+```{r}
+set.seed(123)
+trainPartition <- createDataPartition(training_data_clean$classe, p=0.80, list=F)
+training_set <- training_data_clean[trainPartition, ]
+validation_set <- training_data_clean[-trainPartition, ]
+```
+
+This creates an 80% training_set with 15699 records and a 20% validation_set with 3923 records.
+
+## Creating the Model using Random Forest
+I chose random forests because there are a lot of variables and the algorithm estimates which variables are important in the classification and it has been shown to create accurate classifiers for many datasets.
+
+First we'll set a 5 cross validation
+
+```{r}
+ctr <- trainControl(method="cv", 5)
+```
+
+Next we train the model with 500 trees
+```{r}
+mdl <- train(classe ~ ., data=training_data_clean, method="rf", trControl=ctr, ntree=500)
+mdl
+```
+
+## Evaluating the Model on the Validation Set
+Now we can see for the model does with the validation data set.
+
+```{r}
+predict <- predict(mdl, validation_set)
+confusionMatrix(validation_set$classe, predict)
+
+accuracy <- postResample(predict, validation_set$classe)
+accuracy
+oosampleerror <- 1- as.numeric(confusionMatrix(validation_set$classe, predict)$overall[1])
+oosampleerror
+```
+This estimates that the accurancy of the model is 100% and that the our of sample error is 0 which seems too good to be true, but I'll continue on anyways.
+
+```{r}
+varImp(mdl)
+```
+Here we see that the top 7 most important variables in this model are roll_belt, pitch_forearm, yaw_belt, pitch_belt, magnet_dumbell_z, magnet_dumbell_y, and roll_forearm
+
+## Predicting on original Test Set
+
+So let's see how the model does predicting the testing_data_clean that we prepared above.
+
+```{r}
+final_prediction <- predict(mdl, testing_data_clean[, -length(names(testing_data_clean))])
+
+#display predictions
+data.frame(problem_id = testing_data_clean$problem_id, prediction = final_prediction)
+```
